@@ -631,8 +631,45 @@ def get_cifar10_subset(
     #   4. For each class 0-9, collect its indices in the training set,
     #      then randomly sample 500 of them.
     #   5. Return (Subset(train_dataset, selected_indices), test_dataset).
-    raise NotImplementedError("TODO 1.5: implement get_cifar10_subset")
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=(0.4914, 0.4822, 0.4465),
+            std=(0.2470, 0.2435, 0.2616)
+        )
+    ])
+    train_dataset = datasets.CIFAR10(
+        root=data_root,
+        train=True,
+        download=True,
+        transform=transform
+    )
 
+    test_dataset = datasets.CIFAR10(
+        root=data_root,
+        train=False,
+        download=True,
+        transform=transform
+    )
+
+    set_all_seeds(get_seed())
+
+    selected_indices = []
+    for cls in range(10):
+        class_indices = [
+            i for i, label in enumerate(train_dataset.targets)
+            if label == cls
+        ]
+        sampled = random.sample(class_indices, 500)
+        selected_indices.extend(sampled)
+
+    train_subset = Subset(train_dataset, selected_indices)
+
+    return train_subset, test_dataset
+ 
+        
+        
+        
 
 def train_model(
     model:             VisionTransformer,
