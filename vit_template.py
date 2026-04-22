@@ -749,7 +749,96 @@ def train_model(
     • Create checkpoint_dir if it doesn't exist: os.makedirs(..., exist_ok=True)
     """
     # TODO 1.6 ── Implement the training loop.
-    raise NotImplementedError("TODO 1.6: implement train_model")
+    train_loader = DataLoader(
+        train_subset,
+        batch_size=config["batch_size"],
+        shuffle=True
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=256,
+        shuffle=False
+    )
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config["lr"],
+        weight_decay=1e-4
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=config["epochs"]
+    )
+    criterion = nn.CrossEntropyLoss()
+
+    history = []
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    for epoch in range(1, config["epochs"] + 1):
+        start_time = time.time()
+        model.train()
+        total_loss = 0
+
+        for images, labels in train_loader:
+            optimizer.zero_grad()
+
+            outputs, _ = model(images)
+            loss = criterion(outputs, labels)
+
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+        train_loss = total_loss / len(train_loader)
+
+        model.eval()
+        correct = 0
+        total = 0
+
+        with torch.no_grad():
+            for images, labels in test_loader:
+                outputs, _ = model(images)
+                _, predicted = torch.max(outputs, 1)
+
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+        val_accuracy = correct / total
+        epoch_time = time.time() - start_time
+
+        history.append({
+            "epoch": epoch,
+            "train_loss": round(train_loss, 4),
+            "val_accuracy": round(val_accuracy, 4),
+            "epoch_time_sec": round(epoch_time, 4)
+        })
+
+        scheduler.step()
+
+        if epoch in checkpoint_epochs:
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "config": model.config,
+                "epoch": epoch,
+                "student_id": STUDENT_ID,
+            }, f"{checkpoint_dir}/baseline_epoch_{epoch}.pt")
+
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    log = {
+        "student_id": STUDENT_ID,
+        "seed": get_seed(),
+        "config": config,
+        "history": history,
+        "final_val_accuracy": history[-1]["val_accuracy"],
+        "total_params": total_params
+    }
+
+    if log_path is not None:
+        with open(log_path, "w") as f:
+            json.dump(log, f, indent=2)
+
+    return log
+        
+
+        
 
 
 # =============================================================================
