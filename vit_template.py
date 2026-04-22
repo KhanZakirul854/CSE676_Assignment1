@@ -1027,7 +1027,49 @@ def compute_attention_entropy(
     • os.makedirs(os.path.dirname(output_path), exist_ok=True) before writing.
     """
     # TODO 3.1 -- Implement attention entropy computation.
-    raise NotImplementedError("TODO 3.1: implement compute_attention_entropy")
+    set_all_seeds(get_seed())
+    model = _load_baseline_checkpoint(checkpoint_path)
+
+    _, test_dataset = get_cifar10_subset()
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=256,
+        shuffle=False
+    )
+    num_layers = len(model.blocks)
+    all_cls_attn = [[] for _ in range(num_layers)]
+
+    with torch.no_grad():
+        for images, _ in test_loader:
+            _, attn_list = model(images)
+            for layer_idx, attn in enumerate(attn_list):
+                cls_attn = attn[:, :, 0, :]   # (B, h, T)
+                all_cls_attn[layer_idx].append(cls_attn)
+    layer_attn_means = []
+    for layer_idx in range(num_layers):
+        layer_attn = torch.cat(all_cls_attn[layer_idx], dim=0)  # (N, h, T)
+        layer_attn = layer_attn.mean(dim=1)  # average over heads → (N, T)
+        layer_attn = layer_attn.mean(dim=0)  # average over images → (T)
+        layer_attn_means.append(layer_attn)
+
+    result = {}
+
+    eps = 1e-9
+
+    for i, p in enumerate(layer_attn_means):
+        p = torch.clamp(p, eps, 1.0)
+        entropy = -(p * torch.log2(p)).sum().item()
+        result[f"layer_{i}"] = round(entropy, 4)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+        
+    return result
+
+
+
 
 
 def compute_pos_embed_correlation(
@@ -1077,7 +1119,53 @@ def compute_pos_embed_correlation(
     • num_pairs = N * (N - 1) // 2
     """
     # TODO 3.2 -- Implement positional embedding correlation.
-    raise NotImplementedError("TODO 3.2: implement compute_pos_embed_correlation")
+    set_all_seeds(get_seed())
+    model = _load_baseline_checkpoint(checkpoint_path)
+
+    pos_embed = model.pos_embed.squeeze(0)   # (N+1, D)
+    patch_embed = pos_embed[1:]              # remove CLS → (N, D)
+
+    patch_embed = F.normalize(patch_embed, dim=-1)
+    S = patch_embed @ patch_embed.T   # (N, N)
+
+    patch_size = model.config["patch_size"]
+    G = 32 // patch_size
+
+    coords = []
+    for k in range(patch_embed.shape[0]):
+        row = k // G
+        col = k % G
+        coords.append([row, col])
+
+    coords = torch.tensor(coords, dtype=torch.float32)  # (N, 2)
+
+    diff = coords[:, None, :] - coords[None, :, :]   # (N, N, 2)
+    E = diff.norm(dim=-1) 
+
+    N = S.shape[0]
+    idx = torch.triu_indices(N, N, offset=1)
+
+    sim_vals = S[idx[0], idx[1]]
+    dist_vals = E[idx[0], idx[1]]
+
+    sim_np = sim_vals.cpu().numpy()
+    dist_np = dist_vals.cpu().numpy()
+
+    r = np.corrcoef(sim_np, dist_np)[0, 1]
+    num_pairs = int(N * (N - 1) // 2)
+
+    result = {
+        "pearson_r": round(float(r), 4),
+        "num_pairs": num_pairs
+    }
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+    return result  
+
 
 
 def compute_per_class_accuracy(
