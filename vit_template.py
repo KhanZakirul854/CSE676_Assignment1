@@ -1148,8 +1148,8 @@ def compute_pos_embed_correlation(
     sim_vals = S[idx[0], idx[1]]
     dist_vals = E[idx[0], idx[1]]
 
-    sim_np = sim_vals.cpu().numpy()
-    dist_np = dist_vals.cpu().numpy()
+    sim_np = sim_vals.detach().cpu().numpy()
+    dist_np = dist_vals.detach().cpu().numpy()
 
     r = np.corrcoef(sim_np, dist_np)[0, 1]
     num_pairs = int(N * (N - 1) // 2)
@@ -1208,7 +1208,68 @@ def compute_per_class_accuracy(
       Diagonal entries are correct predictions; off-diagonal are confusions.
     """
     # TODO 3.3 -- Implement per-class accuracy and confusion analysis.
-    raise NotImplementedError("TODO 3.3: implement compute_per_class_accuracy")
+    set_all_seeds(get_seed())
+    model = _load_baseline_checkpoint(checkpoint_path)
+
+    _, test_dataset = get_cifar10_subset()
+    test_loader = DataLoader(
+         test_dataset,
+         batch_size=256,
+         shuffle=False
+    )
+
+    all_true = []
+    all_pred = []
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            outputs, _ = model(images)
+            _, preds = torch.max(outputs, dim=1)
+
+            all_true.append(labels)
+            all_pred.append(preds)
+
+    all_true = torch.cat(all_true)
+    all_pred = torch.cat(all_pred)
+
+    conf = torch.zeros(10, 10, dtype=torch.long)
+    for t, p in zip(all_true, all_pred):
+        conf[t, p] += 1
+
+    class_accuracies = {}
+
+    for c in range(10):
+        correct = conf[c, c].item()
+        total = conf[c].sum().item()
+        acc = correct / total if total > 0 else 0.0
+        class_accuracies[str(c)] = round(acc, 4)
+
+    confusions = []
+
+    for i in range(10):
+        for j in range(10):
+            if i != j and conf[i, j] > 0:
+                confusions.append((i, j, conf[i, j].item()))
+    
+    # sort by count descending
+    confusions.sort(key=lambda x: x[2], reverse=True)
+
+    top3 = confusions[:3]
+
+    result = {
+        "class_accuracies": class_accuracies,
+        "top3_confusions": [[i, j, count] for (i, j, count) in top3]
+    }
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+    return result
+
+    
+
+
 
 
 def compute_attention_distance(
@@ -1259,7 +1320,63 @@ def compute_attention_distance(
       Then .mean(dim=-1) → (B, h), then .mean() for the scalar.
     """
     # TODO 3.4 -- Implement mean attention distance computation.
-    raise NotImplementedError("TODO 3.4: implement compute_attention_distance")
+    set_all_seeds(get_seed())
+    model = _load_baseline_checkpoint(checkpoint_path)
+
+    _, test_dataset = get_cifar10_subset()
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=256,
+        shuffle=False
+    )
+
+    patch_size = model.config["patch_size"]
+    G = 32 // patch_size
+
+    # coordinates (N, 2)
+    coords = []
+    for k in range(G * G):
+        row = k // G
+        col = k % G
+        coords.append([row, col])
+
+    coords = torch.tensor(coords, dtype=torch.float32)
+
+    # pairwise distance matrix (N, N)
+    diff = coords[:, None, :] - coords[None, :, :]
+    D_grid = diff.norm(dim=-1)
+
+    num_layers = len(model.blocks)
+    layer_distances = [[] for _ in range(num_layers)]
+
+    with torch.no_grad():
+        for images, _ in test_loader:
+            _, attn_list = model(images)
+            for layer_idx, attn in enumerate(attn_list):
+                A_patch = attn[:, :, 1:, 1:]   # (B, h, N, N)
+                A_patch = A_patch / A_patch.sum(dim=-1, keepdim=True).clamp(min=1e-9)
+
+                mean_dist_per_query = (A_patch * D_grid).sum(dim=-1)   # (B, h, N)
+                mean_dist_per_head = mean_dist_per_query.mean(dim=-1)  # (B, h)
+
+                layer_distances[layer_idx].append(mean_dist_per_head)  # ✅ important
+
+    result = {}
+    
+    for layer_idx in range(num_layers):
+        vals = torch.cat(layer_distances[layer_idx], dim=0)  # (total_B, h)
+        result[f"layer_{layer_idx}"] = round(vals.mean().item(), 4)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+    return result 
+           
+
+
+
 
 
 # =============================================================================
@@ -1363,13 +1480,13 @@ Modes
     # Validate student ID early so the error is obvious.
     _ = get_seed()
 
-    run_baseline()
+    #run_baseline()
 
     if args.mode == "all":
         print("\n" + "=" * 60)
         print("ABLATION STUDIES")
         print("=" * 60)
-        run_ablations()
+        #run_ablations()
 
         run_analysis()
 
