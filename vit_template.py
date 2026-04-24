@@ -1484,11 +1484,12 @@ Modes
 
     if args.mode == "all":
         print("\n" + "=" * 60)
-        print("ABLATION STUDIES")
+       # print("ABLATION STUDIES")
+        print("Quantitative Analysis")
         print("=" * 60)
-        run_ablations()
+        #run_ablations()
 
-        #run_analysis()
+        run_analysis()
 
     print("\nDone.  Inspect the JSON files in ablation_logs/ and analysis/,")
     print("then write your report.  Remember to run check_git.py before submitting!")
